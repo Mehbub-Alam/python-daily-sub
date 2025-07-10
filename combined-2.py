@@ -19,13 +19,15 @@ class CSVProcessorApp:
         # Window configuration
         self.root.iconphoto(False, tk.PhotoImage(file="icon.png"))
         self.bg_color = "#1b2b36"
-        self.progress_color = "#ff003c"  # Color for progress bar when active
+        self.progress_color = "#0a90f0"  # Progress bar color
+        self.active_red = "#ff003c"      # Normal button color
+        self.disabled_red = "#ff6b6b"    # Lighter red for disabled state
         self.root.configure(background=self.bg_color)
         
         # Center window
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        app_width, app_height = 600, 450  # Adjusted height
+        app_width, app_height = 600, 450
         x = int((screen_width/2) - (app_width/2))
         y = int((screen_height/2) - (app_height/2))
         self.root.geometry(f'{app_width}x{app_height}+{x}+{y-60}')
@@ -105,12 +107,12 @@ class CSVProcessorApp:
         # Progress bar (initially hidden with background color)
         self.progress = ttk.Progressbar(self.root, orient="horizontal", 
                                       length=300, mode="determinate",
-                                      style="red.Horizontal.TProgressbar")
+                                      style="blue.Horizontal.TProgressbar")
         
         # Create style for progress bar
         style = ttk.Style()
         style.theme_use('default')
-        style.configure("red.Horizontal.TProgressbar", 
+        style.configure("blue.Horizontal.TProgressbar", 
                         background=self.progress_color,
                         troughcolor=self.bg_color,
                         bordercolor=self.bg_color,
@@ -124,17 +126,26 @@ class CSVProcessorApp:
         
         # Submit button with hover effect
         self.submit_btn = tk.Button(self.root, text="Submit", 
-                                   height=2, width=12, bg='#ff003c', 
+                                   height=2, width=12, bg=self.active_red, 
                                    fg="#fff", activebackground="#ba0630", 
                                    activeforeground="#fff", 
                                    font=('Arial', 10, 'bold'),
                                    command=self.start_processing,
                                    cursor='hand2',
-                                   bd=0)
+                                   bd=0,
+                                   disabledforeground="#fff")
         self.submit_btn.pack(pady=10)
         
-        # Disable submit until files are selected
+        # Set initial disabled state
         self.submit_btn.config(state=tk.DISABLED)
+        self.update_submit_button_state()
+    
+    def update_submit_button_state(self):
+        """Update the submit button appearance based on state"""
+        if self.submit_btn['state'] == tk.DISABLED:
+            self.submit_btn.config(bg=self.disabled_red)
+        else:
+            self.submit_btn.config(bg=self.active_red)
         
     def setup_variables(self):
         self.client_status_file = ""
@@ -168,6 +179,10 @@ class CSVProcessorApp:
             if all([self.client_status_file, self.raw_report_file, 
                    self.cmdb_status_file, self.aws_status_file]):
                 self.submit_btn.config(state=tk.NORMAL)
+            else:
+                self.submit_btn.config(state=tk.DISABLED)
+            
+            self.update_submit_button_state()
     
     def start_processing(self):
         # Show progress bar when processing starts
@@ -195,6 +210,7 @@ class CSVProcessorApp:
         self.start_date_picker.config(state=tk.DISABLED)
         self.end_date_picker.config(state=tk.DISABLED)
         self.submit_btn.config(state=tk.DISABLED)
+        self.update_submit_button_state()
         
         # Start processing thread
         processing_thread = threading.Thread(
@@ -323,10 +339,16 @@ class CSVProcessorApp:
                     aws_windows_inactive += 1
                 if ((cell["State"] == "stopped") and (cell["OS Type"] == "Linux")):
                     aws_linux_inactive += 1
-                if ((cell["operational_status"] == "Operational") and (cell["State"] != "stopped") and (cell["OS Type"] == "Windows")):
-                    windows_ticket_count += 1
-                if ((cell["operational_status"] == "Operational") and (cell["State"] != "stopped") and (cell["OS Type"] == "Linux")):
-                    linux_ticket_count += 1
+            
+            # Calculate ticket counts (systems that are operational and running)
+            for index, cell in df_output.iterrows():
+                if ((cell["operational_status"] == "Operational") and 
+                    (cell["State"] != "stopped") and 
+                    (cell["State"] != "N/A")):
+                    if cell["OS Type"] == "Windows":
+                        windows_ticket_count += 1
+                    else:
+                        linux_ticket_count += 1
             
             # Save output
             self.queue.put(("progress", "Saving output files...", 90))
@@ -336,17 +358,20 @@ class CSVProcessorApp:
             df_output.to_excel(f'{export_path}/Cleaned_combinedRaw_{ts}.xlsx', index=False)
             df_output.to_excel(f'{export_path}/Cleaned_combined_{ts}.xlsx', index=False)
             
-            # Prepare summary (now includes counts in completion message)
+            # Prepare summary with all counts
             summary = (
                 f"Processing complete!\n\n"
-                f"Selected Date Range: {start_date_str} to {end_date_str}\n\n"
-                f"Counts:\n"
-                f"- Windows Systems: {windows_count}\n"
-                f"- Linux Systems: {linux_count}\n"
+                f"Selected Date Range: {start_date_str} to {end_date_str}\n"
+                f"Processed Date Range: {date_chosen_older} to {date_chosen_newer}\n\n"
+                f"System Counts:\n"
+                f"- Windows: {windows_count}\n"
+                f"- Linux: {linux_count}\n\n"
+                f"Inactive Counts:\n"
                 f"- CMDB Inactive (Windows): {cmdb_windows_inactive}\n"
                 f"- CMDB Inactive (Linux): {cmdb_linux_inactive}\n"
                 f"- AWS Inactive (Windows): {aws_windows_inactive}\n"
-                f"- AWS Inactive (Linux): {aws_linux_inactive}\n"
+                f"- AWS Inactive (Linux): {aws_linux_inactive}\n\n"
+                f"Ticket Counts:\n"
                 f"- Windows Tickets: {windows_ticket_count}\n"
                 f"- Linux Tickets: {linux_ticket_count}\n\n"
                 f"Files saved to: {export_path}"
@@ -385,7 +410,16 @@ class CSVProcessorApp:
         self.aws_status_btn.config(state=tk.NORMAL)
         self.start_date_picker.config(state=tk.NORMAL)
         self.end_date_picker.config(state=tk.NORMAL)
-        self.submit_btn.config(state=tk.NORMAL)
+        
+        # Re-enable submit button if all files are selected
+        if all([self.client_status_file, self.raw_report_file, 
+               self.cmdb_status_file, self.aws_status_file]):
+            self.submit_btn.config(state=tk.NORMAL)
+        else:
+            self.submit_btn.config(state=tk.DISABLED)
+        
+        self.update_submit_button_state()
+        
         # Hide progress bar after completion
         self.progress.pack_forget()
         self.progress_visible = False
